@@ -38,10 +38,14 @@ type Reward = {
   };
 };
 
-async function fetchReferralVolumes(blockNumberRange: BlockRange) {
+async function fetchReferralVolumes(
+  blockNumberRange: BlockRange,
+  payoutId: string
+) {
   const { data } = await query(REFERRAL_VOLUMES, {
     blockNumber_lt: blockNumberRange.end,
     blockNumber_gte: blockNumberRange.start,
+    payoutId,
   });
   return data;
 }
@@ -63,8 +67,7 @@ type AmpliFiReferralVolumes = {
 };
 // maps GMX rewards to AmpliFi rewards
 function cleanAmpliFiReferralVolumes(
-  referralVolumesData: any,
-  codeToOwner: Map<string, string>
+  referralVolumesData: any
 ): Array<AmpliFiReferralVolumes> {
   const cleanReferralVolumes = referralVolumesData.map(
     ({
@@ -74,6 +77,7 @@ function cleanAmpliFiReferralVolumes(
       transactionHash,
       referral,
       referrer,
+      oldReferrer,
       totalRebateUsd,
       discountUsd,
     }: any) => {
@@ -82,8 +86,7 @@ function cleanAmpliFiReferralVolumes(
         BigNumber.from(discountUsd)
       );
       let rebateUsd;
-      const referrerAmpliFi = codeToOwner.get(referralCode);
-      if (referrerAmpliFi == null) {
+      if (oldReferrer == null) {
         throw (
           "Invalid referral code. Couldnt find the oldOwner for referral code: " +
           referralCode
@@ -99,7 +102,7 @@ function cleanAmpliFiReferralVolumes(
             transactionHash,
             referral,
             referrerGMX: referrer,
-            referrer: referrerAmpliFi,
+            referrer: oldReferrer,
             totalRebateUsdGMX: totalRebateUsd,
             rebateUsdGMX,
             rebateUsd: rebateUsd,
@@ -123,7 +126,7 @@ function cleanAmpliFiReferralVolumes(
             transactionHash,
             referral,
             referrerGMX: referrer,
-            referrer: referrerAmpliFi,
+            referrer: oldReferrer,
             totalRebateUsdGMX: totalRebateUsd,
             rebateUsdGMX,
             rebateUsd,
@@ -145,7 +148,7 @@ function cleanAmpliFiReferralVolumes(
             transactionHash,
             referral,
             referrerGMX: referrer,
-            referrer: referrerAmpliFi,
+            referrer: oldReferrer,
             totalRebateUsdGMX: totalRebateUsd,
             rebateUsd,
             rebateUsdGMX,
@@ -285,8 +288,6 @@ function calculateRewards(
     }
   );
   const rewards: Array<Reward> = [];
-  console.log(rewardsReferrerMap);
-  console.log(rewardsRefereeMap);
   const date = new Date();
   rewardsReferrerMap.forEach(({ ethInUsd, lagg, account }) => {
     rewards.push({
@@ -411,26 +412,92 @@ function getTxParams(
   return txParams;
 }
 
+function checks(
+  rawData: any,
+  input: {
+    cleanData: {
+      referralVolumes: AmpliFiReferralVolumes[];
+    };
+    rewards: Reward[];
+  }
+) {
+  // What was paid to AmpliFi should be exactly the total RebatesUsdGMX - total discountUsd
+  const ethPaidToAmpliFi = BigNumber.from(rawData.distribution.amount);
+  const usdAmpliFiRebates = rawData.referralVolumeRecords.reduce(
+    (sum: any, { totalRebateUsd, discountUsd }: any) => {
+      return sum.add(
+        BigNumber.from(totalRebateUsd).sub(BigNumber.from(discountUsd))
+      );
+    },
+    BigNumber.from(0)
+  );
+  const ethPrice = (
+    usdAmpliFiRebates.div(ethPaidToAmpliFi).toString() / 1e12
+  ).toFixed(2);
+
+  const ethPrice100x = parseInt(
+    (parseFloat(ethPrice) * 100).toString()
+  ).toString();
+  // Assuming everyone is tier 1, what AmpliFi pays out should be half of what was paid to AmpliFi
+  let calculatedRewardsInETH = BigNumber.from("0");
+  for (const reward of input.rewards) {
+    if (reward.rewardToken.name == "WETH") {
+      if (reward.status == "paid" || reward.status == "paid externally") {
+        continue;
+      }
+
+      const eth = BigNumber.from(reward.amountUSD)
+        .mul(100)
+        .div(BigNumber.from(ethPrice100x))
+        .div(1e12)
+        .toString();
+      calculatedRewardsInETH = calculatedRewardsInETH.add(eth);
+    }
+  }
+  const ratio = usdAmpliFiRebates
+    .mul("100")
+    .div(calculatedRewardsInETH)
+    .div(ethPrice100x);
+
+  console.log(
+    "Price of eth calculated (based on what was paid and assuming that we have the correct block numbers set:\n",
+    ethPrice
+  );
+  console.log(
+    "ratio between total rebates AmpliFi received to what is being paid out to AmpliFi affiliates:\n",
+    ratio.toString() / 1e12
+  );
+}
 async function main(blockNumberRange: BlockRange) {
   //data fetching
-  const data = await fetchReferralVolumes(blockNumberRange);
+  const data = await fetchReferralVolumes(
+    blockNumberRange,
+    "0x6a03fa1df243abe7a46cf943de1b1e500285949c:0x7b16046156785b650f9d6c5e3416941b8baf3b449a61d5178ae1c65d09ee3128:300"
+  );
   const ethPrice = (await fetchEthPrice()) as string;
   // cleaning data
   const referralVolumes = cleanAmpliFiReferralVolumes(
-    data.referralVolumeRecords,
-    mapAmpliFiReferralCodes(data.referralCodes)
+    data.referralVolumeRecords
   );
-  reduceAmpliFiReferralVolumes(referralVolumes);
+  // reduceAmpliFiReferralVolumes(referralVolumes);
   // calculate rewards
   const rewards = calculateRewards(referralVolumes);
-  // set rewards in database
-  console.log(ethPrice);
-  const txParams = getTxParams(rewards, "1500");
-  console.log(txParams);
+  // TODO:  set rewards in database
+
+  const txParams = getTxParams(rewards, "1354.41");
+  console.log("txParams:", txParams);
+
+  checks(data, {
+    cleanData: {
+      referralVolumes,
+    },
+    rewards,
+  });
+
   //format rewards for transaction
   //approve
   //batchsend
-  //add 1% meta promoter
+  //TODO: add 1% meta promoter
   //check if on tier 2,3
 }
 

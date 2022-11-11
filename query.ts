@@ -5,7 +5,7 @@ const MULTISIG = {
 };
 
 export const REFERRAL_VOLUMES = `
-query ReferralTrades ($blockNumber_lt: BigInt!, $blockNumber_gte: BigInt!){
+query ReferralTrades ($blockNumber_lt: BigInt!, $blockNumber_gte: BigInt!, $payoutId: String!){
   referralVolumeRecords(
     where: {blockNumber_lt: $blockNumber_lt, blockNumber_gte:  $blockNumber_gte, referrer: "${MULTISIG.Arbitrum}"}
     orderBy: blockNumber
@@ -16,14 +16,20 @@ query ReferralTrades ($blockNumber_lt: BigInt!, $blockNumber_gte: BigInt!){
     volume
     transactionHash
     referral
+    oldReferrer
     referrer
     totalRebateUsd
     discountUsd
   }
-  referralCodes (where: {owner: "${MULTISIG.Arbitrum}"}) {
-    oldOwner
-    code
-    owner
-  } 
+  distribution(
+    id: $payoutId
+  ) {
+    id
+    transactionHash
+    typeId
+    timestamp
+    token
+    amount
+  }
 }
 `;
