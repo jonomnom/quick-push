@@ -484,7 +484,7 @@ async function main(blockNumberRange: BlockRange) {
   const rewards = calculateRewards(referralVolumes);
   // TODO:  set rewards in database
 
-  const txParams = getTxParams(rewards, "1354.41");
+  const txParams = getTxParams(rewards, "1255");
   console.log("txParams:", txParams);
 
   checks(data, {
@@ -501,9 +501,14 @@ async function main(blockNumberRange: BlockRange) {
   //check if on tier 2,3
 }
 
+const blockTimeline = [10595435, 36480533, 38429802];
+// this is purely for record keeping
+const atEthPriceOf = ["1354.41", "1255"]; // TODO: Save in a database
+const start = blockTimeline[blockTimeline.length - 2];
+const end = blockTimeline[blockTimeline.length - 1];
 const blockNumberRange = {
-  start: 10595435,
-  end: 36480533,
+  start,
+  end,
 };
 
 /*
